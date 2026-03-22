@@ -1,5 +1,5 @@
 """
-Чат с персонажем через Groq — бесплатно, быстро, работает из России (llama3)
+Чат с персонажем через Google Gemini — бесплатно, работает из России
 """
 import json
 import os
@@ -11,32 +11,27 @@ def get_conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
 
 
-def groq_chat(system_prompt: str, history: list, user_msg: str) -> str:
-    messages = [{"role": "system", "content": system_prompt}]
-    messages += history[-10:]
-    messages.append({"role": "user", "content": user_msg})
+def gemini_chat(system_prompt: str, history: list, user_msg: str) -> str:
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+
+    contents = []
+    for msg in history[-10:]:
+        role = "user" if msg["role"] == "user" else "model"
+        contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+    contents.append({"role": "user", "parts": [{"text": user_msg}]})
 
     payload = json.dumps({
-        "model": "llama3-8b-8192",
-        "messages": messages,
-        "max_tokens": 400,
-        "temperature": 0.85,
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": contents,
+        "generationConfig": {"maxOutputTokens": 400, "temperature": 0.85}
     }).encode("utf-8")
 
-    api_key = os.environ.get("GROQ_API_KEY", "")
-    req = urllib.request.Request(
-        "https://api.groq.com/openai/v1/chat/completions",
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST"
-    )
-    with urllib.request.urlopen(req, timeout=20) as resp:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=25) as resp:
         result = json.loads(resp.read())
 
-    return result["choices"][0]["message"]["content"].strip()
+    return result["candidates"][0]["content"]["parts"][0]["text"].strip()
 
 
 def handler(event: dict, context) -> dict:
@@ -62,6 +57,9 @@ def handler(event: dict, context) -> dict:
     if not char_id or not user_msg:
         return {"statusCode": 400, "headers": headers, "body": json.dumps({"error": "char_id и message обязательны"})}
 
+    if not os.environ.get("GEMINI_API_KEY"):
+        return {"statusCode": 503, "headers": headers, "body": json.dumps({"error": "⚙️ Добавьте GEMINI_API_KEY в Ядро → Секреты. Получить бесплатно на aistudio.google.com"})}
+
     conn = get_conn()
     cur = conn.cursor()
 
@@ -85,15 +83,12 @@ def handler(event: dict, context) -> dict:
 
     system_prompt = (
         f"Ты — персонаж по имени {char_name}. {char_desc}. "
-        f"Всегда оставайся в образе. Отвечай на русском языке. Отвечай живо и в духе своего характера."
+        f"Всегда оставайся в образе. Отвечай на русском языке. "
+        f"Отвечай живо, кратко и в духе своего характера."
     )
 
-    if not os.environ.get("GROQ_API_KEY"):
-        conn.close()
-        return {"statusCode": 503, "headers": headers, "body": json.dumps({"error": "⚙️ Нужно добавить GROQ_API_KEY в Ядро → Секреты. Получить бесплатно на console.groq.com"})}
-
     try:
-        reply = groq_chat(system_prompt, history, user_msg)
+        reply = gemini_chat(system_prompt, history, user_msg)
     except Exception as e:
         conn.close()
         return {"statusCode": 502, "headers": headers, "body": json.dumps({"error": f"Ошибка ИИ: {str(e)}"})}
