@@ -1,14 +1,52 @@
 """
-Чат с персонажем через OpenRouter — работает из России, поддерживает GPT и другие модели
+Чат с персонажем через Hugging Face — бесплатно, без ключей, работает из России
 """
 import json
 import os
+import urllib.request
 import psycopg2
-from openai import OpenAI
 
 
 def get_conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
+
+
+def hf_chat(system_prompt: str, history: list, user_msg: str) -> str:
+    prompt = f"<s>[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n"
+    for msg in history[-6:]:
+        if msg["role"] == "user":
+            prompt += f"{msg['content']} [/INST] "
+        else:
+            prompt += f"{msg['content']} </s><s>[INST] "
+    prompt += f"{user_msg} [/INST]"
+
+    payload = json.dumps({
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 300,
+            "temperature": 0.8,
+            "return_full_text": False,
+            "stop": ["</s>", "[INST]"]
+        }
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=25) as resp:
+        result = json.loads(resp.read())
+
+    if isinstance(result, list) and result:
+        text = result[0].get("generated_text", "").strip()
+        # Обрезаем лишние токены если есть
+        for stop in ["</s>", "[INST]", "<<SYS>>"]:
+            if stop in text:
+                text = text.split(stop)[0].strip()
+        return text or "..."
+    return "Не могу ответить прямо сейчас."
 
 
 def handler(event: dict, context) -> dict:
@@ -45,38 +83,26 @@ def handler(event: dict, context) -> dict:
 
     char_name, char_desc, is_public, owner_id = char
 
-    # Приватный персонаж — только для автора
     if not is_public and owner_id and owner_id != user_id:
         conn.close()
         return {"statusCode": 403, "headers": headers, "body": json.dumps({"error": "Этот персонаж приватный. Только автор может с ним общаться."})}
 
     cur.execute(
-        "SELECT role, content FROM messages WHERE char_id = %s ORDER BY id DESC LIMIT 20",
+        "SELECT role, content FROM messages WHERE char_id = %s ORDER BY id DESC LIMIT 12",
         (char_id,),
     )
     history = [{"role": r[0], "content": r[1]} for r in reversed(cur.fetchall())]
 
-    model = data.get("model", "openai/gpt-3.5-turbo")
-    temperature = float(data.get("temperature", 0.8))
-
-    # OpenRouter — работает из России
-    client = OpenAI(
-        api_key=os.environ.get("OPENROUTER_API_KEY", ""),
-        base_url="https://openrouter.ai/api/v1",
+    system_prompt = (
+        f"You are a character named {char_name}. {char_desc}. "
+        f"Stay in character always. Reply in Russian. Be concise and expressive."
     )
 
-    messages = [
-        {"role": "system", "content": f"Ты персонаж по имени {char_name}. {char_desc}. Отвечай в соответствии со своим характером."}
-    ]
-    messages += history
-    messages.append({"role": "user", "content": user_msg})
-
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-    )
-    reply = response.choices[0].message.content
+    try:
+        reply = hf_chat(system_prompt, history, user_msg)
+    except Exception as e:
+        conn.close()
+        return {"statusCode": 502, "headers": headers, "body": json.dumps({"error": f"Ошибка ИИ: {str(e)}"})}
 
     cur.execute("INSERT INTO messages (char_id, role, content) VALUES (%s, %s, %s)", (char_id, "user", user_msg))
     cur.execute("INSERT INTO messages (char_id, role, content) VALUES (%s, %s, %s)", (char_id, "assistant", reply))
