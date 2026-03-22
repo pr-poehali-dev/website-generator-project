@@ -1,5 +1,5 @@
 """
-API для управления персонажами: создание, список, удаление
+API для управления персонажами: создание, список, удаление, переключение приватности
 """
 import json
 import os
@@ -16,7 +16,7 @@ def handler(event: dict, context) -> dict:
             "statusCode": 200,
             "headers": {
                 "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+                "Access-Control-Allow-Methods": "GET, POST, DELETE, PATCH, OPTIONS",
                 "Access-Control-Allow-Headers": "Content-Type",
                 "Access-Control-Max-Age": "86400",
             },
@@ -30,10 +30,10 @@ def handler(event: dict, context) -> dict:
     cur = conn.cursor()
 
     if method == "GET":
-        cur.execute("SELECT id, name, description, avatar_emoji, created_at FROM characters ORDER BY created_at DESC")
+        cur.execute("SELECT id, name, description, avatar_emoji, is_public, created_at FROM characters ORDER BY created_at DESC")
         rows = cur.fetchall()
         chars = [
-            {"id": r[0], "name": r[1], "description": r[2], "avatar_emoji": r[3], "created_at": str(r[4])}
+            {"id": r[0], "name": r[1], "description": r[2], "avatar_emoji": r[3], "is_public": r[4], "created_at": str(r[5])}
             for r in rows
         ]
         conn.close()
@@ -44,17 +44,30 @@ def handler(event: dict, context) -> dict:
         name = data.get("name", "").strip()
         description = data.get("description", "").strip()
         avatar_emoji = data.get("avatar_emoji", "🤖")
+        is_public = data.get("is_public", True)
         if not name or not description:
             conn.close()
             return {"statusCode": 400, "headers": headers, "body": json.dumps({"error": "name и description обязательны"})}
         cur.execute(
-            "INSERT INTO characters (name, description, avatar_emoji) VALUES (%s, %s, %s) RETURNING id",
-            (name, description, avatar_emoji),
+            "INSERT INTO characters (name, description, avatar_emoji, is_public) VALUES (%s, %s, %s, %s) RETURNING id",
+            (name, description, avatar_emoji, is_public),
         )
         char_id = cur.fetchone()[0]
         conn.commit()
         conn.close()
         return {"statusCode": 200, "headers": headers, "body": json.dumps({"status": "ok", "char_id": char_id})}
+
+    if method == "PATCH":
+        data = json.loads(event.get("body") or "{}")
+        char_id = data.get("id")
+        is_public = data.get("is_public")
+        if char_id is None or is_public is None:
+            conn.close()
+            return {"statusCode": 400, "headers": headers, "body": json.dumps({"error": "id и is_public обязательны"})}
+        cur.execute("UPDATE characters SET is_public = %s WHERE id = %s", (is_public, char_id))
+        conn.commit()
+        conn.close()
+        return {"statusCode": 200, "headers": headers, "body": json.dumps({"status": "updated"})}
 
     if method == "DELETE":
         params = event.get("queryStringParameters") or {}

@@ -7,7 +7,7 @@ const API = {
   history: "https://functions.poehali.dev/ff9f3482-ca76-4699-97ba-73f43177f7ac",
 };
 
-const EMOJIS = ["🤖", "🧙", "🦊", "🐉", "👸", "🕵️", "🧛", "🦸", "🧜", "🎭", "👾", "🦁"];
+const EMOJIS = ["🤖", "🧙", "🦊", "🐉", "👸", "🕵️", "🧛", "🦸", "🧜", "🎭", "👾", "🦁", "🐺", "🧝", "🧞", "🧚"];
 
 type Tab = "characters" | "chat" | "create" | "history" | "settings";
 
@@ -16,6 +16,7 @@ interface Character {
   name: string;
   description: string;
   avatar_emoji: string;
+  is_public: boolean;
   created_at: string;
 }
 
@@ -30,6 +31,7 @@ interface Message {
 
 export default function Index() {
   const [tab, setTab] = useState<Tab>("characters");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [activeChar, setActiveChar] = useState<Character | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -40,6 +42,7 @@ export default function Index() {
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [newEmoji, setNewEmoji] = useState("🤖");
+  const [newIsPublic, setNewIsPublic] = useState(true);
   const [creating, setCreating] = useState(false);
   const [settings, setSettings] = useState({
     model: localStorage.getItem("ai_model") || "gpt-3.5-turbo",
@@ -71,6 +74,7 @@ export default function Index() {
   async function selectCharacter(char: Character) {
     setActiveChar(char);
     setTab("chat");
+    setSidebarOpen(false);
     const res = await fetch(`${API.history}?char_id=${char.id}`);
     const data = await res.json();
     setMessages(data);
@@ -82,15 +86,18 @@ export default function Index() {
     setInput("");
     setMessages(prev => [...prev, { id: Date.now(), role: "user", content: userMsg, created_at: "" }]);
     setLoading(true);
-    const res = await fetch(API.chat, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ char_id: activeChar.id, message: userMsg, model: settings.model, temperature: parseFloat(settings.temperature) }),
-    });
-    const data = await res.json();
-    setLoading(false);
-    if (data.reply) {
-      setMessages(prev => [...prev, { id: Date.now() + 1, role: "assistant", content: data.reply, created_at: "" }]);
+    try {
+      const res = await fetch(API.chat, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ char_id: activeChar.id, message: userMsg, model: settings.model, temperature: parseFloat(settings.temperature) }),
+      });
+      const data = await res.json();
+      if (data.reply) {
+        setMessages(prev => [...prev, { id: Date.now() + 1, role: "assistant", content: data.reply, created_at: "" }]);
+      }
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -100,10 +107,10 @@ export default function Index() {
     await fetch(API.characters, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newName, description: newDesc, avatar_emoji: newEmoji }),
+      body: JSON.stringify({ name: newName, description: newDesc, avatar_emoji: newEmoji, is_public: newIsPublic }),
     });
     setCreating(false);
-    setNewName(""); setNewDesc(""); setNewEmoji("🤖");
+    setNewName(""); setNewDesc(""); setNewEmoji("🤖"); setNewIsPublic(true);
     await loadCharacters();
     setTab("characters");
   }
@@ -114,6 +121,15 @@ export default function Index() {
     if (activeChar?.id === id) { setActiveChar(null); setMessages([]); }
   }
 
+  async function togglePublic(char: Character) {
+    setCharacters(prev => prev.map(c => c.id === char.id ? { ...c, is_public: !c.is_public } : c));
+    await fetch(API.characters, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: char.id, is_public: !char.is_public }),
+    });
+  }
+
   function saveSettings() {
     localStorage.setItem("ai_model", settings.model);
     localStorage.setItem("ai_temp", settings.temperature);
@@ -122,44 +138,99 @@ export default function Index() {
   const navItems: { id: Tab; icon: string; label: string }[] = [
     { id: "characters", icon: "Users", label: "Персонажи" },
     { id: "chat", icon: "MessageCircle", label: "Чат" },
-    { id: "create", icon: "Plus", label: "Создать" },
+    { id: "create", icon: "PlusCircle", label: "Создать" },
     { id: "history", icon: "Clock", label: "История" },
-    { id: "settings", icon: "Settings", label: "Настройки" },
+    { id: "settings", icon: "Settings2", label: "Настройки" },
   ];
 
   return (
-    <div className="min-h-screen bg-white flex flex-col" style={{ fontFamily: "'Golos Text', sans-serif" }}>
-      {/* Header */}
-      <header className="border-b border-gray-100 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-gray-900 flex items-center justify-center text-white text-sm font-bold">А</div>
-          <span className="text-gray-900 font-semibold text-lg tracking-tight">ИИ-Персонажи</span>
+    <div className="min-h-screen flex flex-col" style={{ background: "#1a1a1f", fontFamily: "'Golos Text', sans-serif", color: "#e8e8ec" }}>
+
+      {/* Sidebar overlay */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-40 flex">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setSidebarOpen(false)} />
+          <div className="relative z-50 w-72 h-full flex flex-col animate-slide-in" style={{ background: "#111116" }}>
+            <div className="px-5 py-5 border-b" style={{ borderColor: "#2a2a33" }}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xl font-bold tracking-tight">My<span style={{ color: "#a78bfa" }}>.AI</span></span>
+                <button onClick={() => setSidebarOpen(false)} className="p-1.5 rounded-xl" style={{ color: "#666" }}>
+                  <Icon name="X" size={18} />
+                </button>
+              </div>
+              <p className="text-xs" style={{ color: "#444" }}>Чат с ИИ-персонажами</p>
+            </div>
+
+            <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+              {navItems.map(item => (
+                <button
+                  key={item.id}
+                  onClick={() => { setTab(item.id); setSidebarOpen(false); }}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-medium transition-all"
+                  style={{ background: tab === item.id ? "#2a2a38" : "transparent", color: tab === item.id ? "#a78bfa" : "#666" }}
+                >
+                  <Icon name={item.icon} size={18} />
+                  {item.label}
+                </button>
+              ))}
+
+              {characters.length > 0 && (
+                <>
+                  <div className="px-4 pt-4 pb-1 text-xs font-semibold uppercase tracking-wider" style={{ color: "#333" }}>
+                    Персонажи
+                  </div>
+                  {characters.slice(0, 6).map(char => (
+                    <button
+                      key={char.id}
+                      onClick={() => selectCharacter(char)}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 rounded-2xl text-sm transition-all"
+                      style={{ background: activeChar?.id === char.id ? "#2a2a38" : "transparent", color: activeChar?.id === char.id ? "#e8e8ec" : "#666" }}
+                    >
+                      <span className="text-lg">{char.avatar_emoji}</span>
+                      <span className="truncate">{char.name}</span>
+                      {!char.is_public && <Icon name="Lock" size={12} className="ml-auto shrink-0" style={{ color: "#444" }} />}
+                    </button>
+                  ))}
+                </>
+              )}
+            </nav>
+
+            <div className="px-5 py-4 border-t text-xs" style={{ borderColor: "#2a2a33", color: "#333" }}>
+              My.AI — ИИ-персонажи
+            </div>
+          </div>
         </div>
+      )}
+
+      {/* Header */}
+      <header className="sticky top-0 z-30 flex items-center gap-3 px-4 py-3 border-b" style={{ background: "#111116", borderColor: "#222228" }}>
+        <button onClick={() => setSidebarOpen(true)} className="p-2 rounded-xl" style={{ color: "#666" }}>
+          <Icon name="Menu" size={22} />
+        </button>
+        <span className="text-lg font-bold tracking-tight">My<span style={{ color: "#a78bfa" }}>.AI</span></span>
         {activeChar && tab === "chat" && (
-          <div className="flex items-center gap-2 text-sm text-gray-500">
-            <span className="text-base">{activeChar.avatar_emoji}</span>
-            <span className="font-medium text-gray-700">{activeChar.name}</span>
+          <div className="ml-auto flex items-center gap-2 text-sm">
+            <span>{activeChar.avatar_emoji}</span>
+            <span className="font-medium" style={{ color: "#ccc" }}>{activeChar.name}</span>
           </div>
         )}
       </header>
 
       {/* Main */}
       <main className="flex-1 overflow-hidden flex flex-col max-w-2xl w-full mx-auto">
-        {/* Characters tab */}
+
+        {/* CHARACTERS */}
         {tab === "characters" && (
-          <div className="flex-1 overflow-y-auto p-6">
-            <div className="mb-6">
-              <h1 className="text-2xl font-bold text-gray-900 mb-1">Персонажи</h1>
-              <p className="text-gray-400 text-sm">Выберите с кем поговорить</p>
+          <div className="flex-1 overflow-y-auto p-5">
+            <div className="mb-5">
+              <h1 className="text-2xl font-bold mb-1">Персонажи</h1>
+              <p className="text-sm" style={{ color: "#555" }}>Выберите с кем поговорить</p>
             </div>
             {characters.length === 0 ? (
               <div className="text-center py-20 animate-fade-in">
                 <div className="text-5xl mb-4">🤖</div>
-                <p className="text-gray-400 mb-4">Персонажей пока нет</p>
-                <button
-                  onClick={() => setTab("create")}
-                  className="px-5 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-medium hover:bg-gray-700 transition-colors"
-                >
+                <p className="mb-5" style={{ color: "#555" }}>Персонажей пока нет</p>
+                <button onClick={() => setTab("create")} className="px-6 py-2.5 rounded-2xl text-sm font-semibold" style={{ background: "#a78bfa", color: "#fff" }}>
                   Создать первого
                 </button>
               </div>
@@ -168,24 +239,36 @@ export default function Index() {
                 {characters.map((char, i) => (
                   <div
                     key={char.id}
-                    className="group flex items-center gap-4 p-4 rounded-2xl border border-gray-100 hover:border-gray-200 hover:bg-gray-50 transition-all cursor-pointer animate-fade-in"
-                    style={{ animationDelay: `${i * 0.05}s` }}
+                    className="group flex items-center gap-4 p-4 rounded-2xl border cursor-pointer transition-all animate-fade-in"
+                    style={{ borderColor: "#2a2a33", background: "#16161c", animationDelay: `${i * 0.04}s` }}
                     onClick={() => selectCharacter(char)}
                   >
-                    <div className="w-12 h-12 rounded-2xl bg-gray-100 flex items-center justify-center text-2xl shrink-0">
+                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl shrink-0" style={{ background: "#222230" }}>
                       {char.avatar_emoji}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-gray-900">{char.name}</div>
-                      <div className="text-sm text-gray-400 truncate">{char.description}</div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold" style={{ color: "#e8e8ec" }}>{char.name}</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: char.is_public ? "#1a2e1a" : "#2a1a2a", color: char.is_public ? "#4ade80" : "#c084fc" }}>
+                          {char.is_public ? "Публичный" : "Приватный"}
+                        </span>
+                      </div>
+                      <p className="text-sm truncate mt-0.5" style={{ color: "#555" }}>{char.description}</p>
                     </div>
-                    <button
-                      onClick={e => { e.stopPropagation(); deleteCharacter(char.id); }}
-                      className="opacity-0 group-hover:opacity-100 p-2 rounded-xl hover:bg-red-50 text-gray-300 hover:text-red-400 transition-all"
-                    >
-                      <Icon name="Trash2" size={16} />
-                    </button>
-                    <Icon name="ChevronRight" size={16} className="text-gray-300 group-hover:text-gray-500 transition-colors" />
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={e => { e.stopPropagation(); togglePublic(char); }}
+                        className="p-2 rounded-xl"
+                        style={{ color: "#555" }}
+                        title={char.is_public ? "Сделать приватным" : "Сделать публичным"}
+                      >
+                        <Icon name={char.is_public ? "Globe" : "Lock"} size={15} />
+                      </button>
+                      <button onClick={e => { e.stopPropagation(); deleteCharacter(char.id); }} className="p-2 rounded-xl" style={{ color: "#555" }}>
+                        <Icon name="Trash2" size={15} />
+                      </button>
+                    </div>
+                    <Icon name="ChevronRight" size={16} style={{ color: "#333" }} />
                   </div>
                 ))}
               </div>
@@ -193,48 +276,42 @@ export default function Index() {
           </div>
         )}
 
-        {/* Chat tab */}
+        {/* CHAT */}
         {tab === "chat" && (
           <div className="flex-1 flex flex-col overflow-hidden">
             {!activeChar ? (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center animate-fade-in">
-                  <div className="text-4xl mb-3">💬</div>
-                  <p className="text-gray-400 mb-4">Выберите персонажа для разговора</p>
-                  <button
-                    onClick={() => setTab("characters")}
-                    className="px-5 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-medium hover:bg-gray-700 transition-colors"
-                  >
+                  <div className="text-5xl mb-4">💬</div>
+                  <p className="mb-5" style={{ color: "#555" }}>Выберите персонажа для разговора</p>
+                  <button onClick={() => setTab("characters")} className="px-6 py-2.5 rounded-2xl text-sm font-semibold" style={{ background: "#a78bfa", color: "#fff" }}>
                     К персонажам
                   </button>
                 </div>
               </div>
             ) : (
               <>
-                <div ref={chatRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+                <div ref={chatRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
                   {messages.length === 0 && (
-                    <div className="text-center py-10 animate-fade-in">
-                      <div className="text-4xl mb-2">{activeChar.avatar_emoji}</div>
-                      <p className="text-gray-400 text-sm">Начните разговор с {activeChar.name}</p>
+                    <div className="text-center py-12 animate-fade-in">
+                      <div className="text-5xl mb-3">{activeChar.avatar_emoji}</div>
+                      <p className="font-semibold mb-1" style={{ color: "#ccc" }}>{activeChar.name}</p>
+                      <p className="text-sm" style={{ color: "#555" }}>Начните разговор</p>
                     </div>
                   )}
                   {messages.map((msg, i) => (
-                    <div
-                      key={msg.id}
-                      className={`flex animate-msg-in ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                      style={{ animationDelay: `${i * 0.02}s` }}
-                    >
+                    <div key={msg.id} className={`flex animate-msg-in ${msg.role === "user" ? "justify-end" : "justify-start"}`} style={{ animationDelay: `${i * 0.02}s` }}>
                       {msg.role === "assistant" && (
-                        <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-base mr-2 shrink-0 self-end">
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-base mr-2 shrink-0 self-end" style={{ background: "#222230" }}>
                           {activeChar.avatar_emoji}
                         </div>
                       )}
                       <div
-                        className={`max-w-xs px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
-                          msg.role === "user"
-                            ? "bg-gray-900 text-white rounded-br-sm"
-                            : "bg-gray-100 text-gray-800 rounded-bl-sm"
-                        }`}
+                        className="max-w-xs md:max-w-sm px-4 py-3 rounded-2xl text-sm leading-relaxed"
+                        style={msg.role === "user"
+                          ? { background: "#a78bfa", color: "#fff", borderBottomRightRadius: "4px" }
+                          : { background: "#222230", color: "#ddd", borderBottomLeftRadius: "4px" }
+                        }
                       >
                         {msg.content}
                       </div>
@@ -242,32 +319,34 @@ export default function Index() {
                   ))}
                   {loading && (
                     <div className="flex justify-start animate-fade-in">
-                      <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-base mr-2 shrink-0">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-base mr-2 shrink-0" style={{ background: "#222230" }}>
                         {activeChar.avatar_emoji}
                       </div>
-                      <div className="bg-gray-100 px-4 py-3 rounded-2xl rounded-bl-sm">
+                      <div className="px-4 py-3 rounded-2xl" style={{ background: "#222230", borderBottomLeftRadius: "4px" }}>
                         <div className="flex gap-1">
-                          {[0, 1, 2].map(i => (
-                            <div key={i} className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                          {[0, 1, 2].map(j => (
+                            <div key={j} className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "#555", animationDelay: `${j * 0.15}s` }} />
                           ))}
                         </div>
                       </div>
                     </div>
                   )}
                 </div>
-                <div className="p-4 border-t border-gray-100">
+                <div className="p-4 border-t" style={{ borderColor: "#222228" }}>
                   <div className="flex gap-2">
                     <input
                       value={input}
                       onChange={e => setInput(e.target.value)}
                       onKeyDown={e => e.key === "Enter" && !e.shiftKey && sendMessage()}
-                      placeholder="Напишите сообщение..."
-                      className="flex-1 px-4 py-3 rounded-2xl border border-gray-200 text-sm outline-none focus:border-gray-400 transition-colors bg-gray-50 placeholder-gray-400"
+                      placeholder={`Напишите ${activeChar.name}...`}
+                      className="flex-1 px-4 py-3 rounded-2xl text-sm outline-none placeholder-neutral-600"
+                      style={{ background: "#222230", color: "#e8e8ec", border: "1px solid #2a2a38" }}
                     />
                     <button
                       onClick={sendMessage}
                       disabled={loading || !input.trim()}
-                      className="w-11 h-11 bg-gray-900 text-white rounded-2xl flex items-center justify-center hover:bg-gray-700 transition-colors disabled:opacity-40 shrink-0"
+                      className="w-11 h-11 rounded-2xl flex items-center justify-center transition-all shrink-0 disabled:opacity-30"
+                      style={{ background: "#a78bfa", color: "#fff" }}
                     >
                       <Icon name="Send" size={16} />
                     </button>
@@ -278,24 +357,23 @@ export default function Index() {
           </div>
         )}
 
-        {/* Create tab */}
+        {/* CREATE */}
         {tab === "create" && (
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="flex-1 overflow-y-auto p-5">
             <div className="mb-6">
-              <h1 className="text-2xl font-bold text-gray-900 mb-1">Новый персонаж</h1>
-              <p className="text-gray-400 text-sm">Опишите характер и роль персонажа</p>
+              <h1 className="text-2xl font-bold mb-1">Новый персонаж</h1>
+              <p className="text-sm" style={{ color: "#555" }}>Опишите характер и роль</p>
             </div>
             <div className="space-y-5 animate-fade-in">
               <div>
-                <label className="text-sm font-medium text-gray-700 block mb-2">Аватар</label>
+                <label className="text-sm font-medium block mb-2" style={{ color: "#888" }}>Аватар</label>
                 <div className="flex flex-wrap gap-2">
                   {EMOJIS.map(e => (
                     <button
                       key={e}
                       onClick={() => setNewEmoji(e)}
-                      className={`w-10 h-10 rounded-xl text-xl flex items-center justify-center transition-all ${
-                        newEmoji === e ? "bg-gray-900 shadow-sm scale-105" : "bg-gray-100 hover:bg-gray-200"
-                      }`}
+                      className="w-11 h-11 rounded-2xl text-xl flex items-center justify-center transition-all"
+                      style={{ background: newEmoji === e ? "#a78bfa" : "#222230", transform: newEmoji === e ? "scale(1.1)" : "scale(1)" }}
                     >
                       {e}
                     </button>
@@ -303,28 +381,47 @@ export default function Index() {
                 </div>
               </div>
               <div>
-                <label className="text-sm font-medium text-gray-700 block mb-2">Имя персонажа</label>
+                <label className="text-sm font-medium block mb-2" style={{ color: "#888" }}>Имя персонажа</label>
                 <input
                   value={newName}
                   onChange={e => setNewName(e.target.value)}
                   placeholder="Например: Мудрый волшебник"
-                  className="w-full px-4 py-3 rounded-2xl border border-gray-200 text-sm outline-none focus:border-gray-400 transition-colors bg-gray-50 placeholder-gray-400"
+                  className="w-full px-4 py-3 rounded-2xl text-sm outline-none placeholder-neutral-600"
+                  style={{ background: "#222230", color: "#e8e8ec", border: "1px solid #2a2a38" }}
                 />
               </div>
               <div>
-                <label className="text-sm font-medium text-gray-700 block mb-2">Описание и характер</label>
+                <label className="text-sm font-medium block mb-2" style={{ color: "#888" }}>Описание и характер</label>
                 <textarea
                   value={newDesc}
                   onChange={e => setNewDesc(e.target.value)}
                   placeholder="Опишите кто это, как говорит, что знает..."
                   rows={4}
-                  className="w-full px-4 py-3 rounded-2xl border border-gray-200 text-sm outline-none focus:border-gray-400 transition-colors bg-gray-50 placeholder-gray-400 resize-none"
+                  className="w-full px-4 py-3 rounded-2xl text-sm outline-none placeholder-neutral-600 resize-none"
+                  style={{ background: "#222230", color: "#e8e8ec", border: "1px solid #2a2a38" }}
                 />
+              </div>
+              <div className="flex items-center justify-between p-4 rounded-2xl" style={{ background: "#16161c", border: "1px solid #2a2a33" }}>
+                <div>
+                  <p className="text-sm font-medium" style={{ color: "#ccc" }}>{newIsPublic ? "Публичный" : "Приватный"}</p>
+                  <p className="text-xs mt-0.5" style={{ color: "#444" }}>{newIsPublic ? "Виден всем пользователям" : "Виден только вам"}</p>
+                </div>
+                <button
+                  onClick={() => setNewIsPublic(!newIsPublic)}
+                  className="w-12 h-6 rounded-full transition-all relative shrink-0"
+                  style={{ background: newIsPublic ? "#a78bfa" : "#2a2a38" }}
+                >
+                  <div
+                    className="absolute top-0.5 w-5 h-5 rounded-full transition-all"
+                    style={{ background: "#fff", left: newIsPublic ? "calc(100% - 22px)" : "2px" }}
+                  />
+                </button>
               </div>
               <button
                 onClick={createCharacter}
                 disabled={creating || !newName.trim() || !newDesc.trim()}
-                className="w-full py-3 bg-gray-900 text-white rounded-2xl text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-40"
+                className="w-full py-3 rounded-2xl text-sm font-semibold transition-all disabled:opacity-40"
+                style={{ background: "#a78bfa", color: "#fff" }}
               >
                 {creating ? "Создаю..." : "Создать персонажа"}
               </button>
@@ -332,45 +429,44 @@ export default function Index() {
           </div>
         )}
 
-        {/* History tab */}
+        {/* HISTORY */}
         {tab === "history" && (
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="flex-1 overflow-y-auto p-5">
             <div className="mb-5">
-              <h1 className="text-2xl font-bold text-gray-900 mb-3">История</h1>
+              <h1 className="text-2xl font-bold mb-3">История</h1>
               <div className="relative">
-                <Icon name="Search" size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                <Icon name="Search" size={16} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: "#555" }} />
                 <input
                   value={searchQuery}
                   onChange={e => { setSearchQuery(e.target.value); loadHistory(e.target.value); }}
                   placeholder="Поиск по диалогам..."
-                  className="w-full pl-10 pr-4 py-3 rounded-2xl border border-gray-200 text-sm outline-none focus:border-gray-400 transition-colors bg-gray-50 placeholder-gray-400"
+                  className="w-full pl-10 pr-4 py-3 rounded-2xl text-sm outline-none placeholder-neutral-600"
+                  style={{ background: "#222230", color: "#e8e8ec", border: "1px solid #2a2a38" }}
                 />
               </div>
             </div>
             {historyAll.length === 0 ? (
               <div className="text-center py-16 animate-fade-in">
                 <div className="text-4xl mb-3">📭</div>
-                <p className="text-gray-400">{searchQuery ? "Ничего не найдено" : "История пуста"}</p>
+                <p style={{ color: "#555" }}>{searchQuery ? "Ничего не найдено" : "История пуста"}</p>
               </div>
             ) : (
               <div className="space-y-2">
                 {historyAll.map((msg, i) => (
                   <div
                     key={msg.id}
-                    className={`flex gap-3 p-3 rounded-2xl animate-fade-in ${msg.role === "user" ? "bg-gray-50" : "bg-white border border-gray-100"}`}
-                    style={{ animationDelay: `${i * 0.03}s` }}
+                    className="flex gap-3 p-3 rounded-2xl animate-fade-in"
+                    style={{ background: msg.role === "user" ? "#16161c" : "#1a1a24", animationDelay: `${i * 0.03}s` }}
                   >
-                    <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-sm shrink-0">
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0" style={{ background: "#222230" }}>
                       {msg.role === "user" ? "👤" : msg.avatar_emoji}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-xs font-medium text-gray-500">
-                          {msg.role === "user" ? "Вы" : msg.char_name}
-                        </span>
-                        <span className="text-xs text-gray-300">{msg.created_at?.slice(0, 10)}</span>
+                        <span className="text-xs font-semibold" style={{ color: "#777" }}>{msg.role === "user" ? "Вы" : msg.char_name}</span>
+                        <span className="text-xs" style={{ color: "#333" }}>{msg.created_at?.slice(0, 10)}</span>
                       </div>
-                      <p className="text-sm text-gray-700 line-clamp-2">{msg.content}</p>
+                      <p className="text-sm line-clamp-2" style={{ color: "#bbb" }}>{msg.content}</p>
                     </div>
                   </div>
                 ))}
@@ -379,27 +475,28 @@ export default function Index() {
           </div>
         )}
 
-        {/* Settings tab */}
+        {/* SETTINGS */}
         {tab === "settings" && (
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="flex-1 overflow-y-auto p-5">
             <div className="mb-6">
-              <h1 className="text-2xl font-bold text-gray-900 mb-1">Настройки</h1>
-              <p className="text-gray-400 text-sm">Параметры модели ИИ</p>
+              <h1 className="text-2xl font-bold mb-1">Настройки</h1>
+              <p className="text-sm" style={{ color: "#555" }}>Параметры модели ИИ</p>
             </div>
-            <div className="space-y-5 animate-fade-in">
-              <div className="p-4 rounded-2xl border border-amber-100 bg-amber-50 flex gap-3">
-                <Icon name="KeyRound" size={18} className="text-amber-500 shrink-0 mt-0.5" />
+            <div className="space-y-4 animate-fade-in">
+              <div className="p-4 rounded-2xl flex gap-3" style={{ background: "#1e1a10", border: "1px solid #3a3010" }}>
+                <Icon name="KeyRound" size={18} className="shrink-0 mt-0.5" style={{ color: "#f59e0b" }} />
                 <div>
-                  <p className="text-sm font-medium text-amber-800">API ключ OpenAI</p>
-                  <p className="text-xs text-amber-600 mt-0.5">Ключ настраивается в разделе «Ядро → Секреты» как OPENAI_API_KEY</p>
+                  <p className="text-sm font-semibold" style={{ color: "#fbbf24" }}>API ключ OpenAI</p>
+                  <p className="text-xs mt-0.5" style={{ color: "#856c30" }}>Настраивается в разделе «Ядро → Секреты» как OPENAI_API_KEY</p>
                 </div>
               </div>
-              <div>
-                <label className="text-sm font-medium text-gray-700 block mb-2">Модель GPT</label>
+              <div className="p-4 rounded-2xl" style={{ background: "#16161c", border: "1px solid #2a2a33" }}>
+                <label className="text-sm font-medium block mb-2" style={{ color: "#888" }}>Модель GPT</label>
                 <select
                   value={settings.model}
                   onChange={e => setSettings(s => ({ ...s, model: e.target.value }))}
-                  className="w-full px-4 py-3 rounded-2xl border border-gray-200 text-sm outline-none focus:border-gray-400 transition-colors bg-gray-50 text-gray-700"
+                  className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+                  style={{ background: "#222230", color: "#e8e8ec", border: "1px solid #2a2a38" }}
                 >
                   <option value="gpt-3.5-turbo">GPT-3.5 Turbo (быстрый)</option>
                   <option value="gpt-4o-mini">GPT-4o Mini</option>
@@ -407,27 +504,25 @@ export default function Index() {
                   <option value="gpt-4-turbo">GPT-4 Turbo</option>
                 </select>
               </div>
-              <div>
-                <label className="text-sm font-medium text-gray-700 block mb-2">
-                  Креативность: <span className="text-gray-900 font-semibold">{settings.temperature}</span>
+              <div className="p-4 rounded-2xl" style={{ background: "#16161c", border: "1px solid #2a2a33" }}>
+                <label className="text-sm font-medium block mb-3" style={{ color: "#888" }}>
+                  Креативность: <span className="font-bold" style={{ color: "#a78bfa" }}>{settings.temperature}</span>
                 </label>
                 <input
-                  type="range"
-                  min="0"
-                  max="2"
-                  step="0.1"
+                  type="range" min="0" max="2" step="0.1"
                   value={settings.temperature}
                   onChange={e => setSettings(s => ({ ...s, temperature: e.target.value }))}
-                  className="w-full accent-gray-900"
+                  className="w-full"
+                  style={{ accentColor: "#a78bfa" }}
                 />
-                <div className="flex justify-between text-xs text-gray-400 mt-1">
-                  <span>Точный</span>
-                  <span>Творческий</span>
+                <div className="flex justify-between text-xs mt-1" style={{ color: "#444" }}>
+                  <span>Точный</span><span>Творческий</span>
                 </div>
               </div>
               <button
                 onClick={saveSettings}
-                className="w-full py-3 bg-gray-900 text-white rounded-2xl text-sm font-medium hover:bg-gray-700 transition-colors"
+                className="w-full py-3 rounded-2xl text-sm font-semibold"
+                style={{ background: "#a78bfa", color: "#fff" }}
               >
                 Сохранить настройки
               </button>
@@ -437,17 +532,16 @@ export default function Index() {
       </main>
 
       {/* Bottom nav */}
-      <nav className="border-t border-gray-100 bg-white px-2 py-2">
-        <div className="max-w-2xl mx-auto flex justify-around">
+      <nav className="border-t" style={{ background: "#111116", borderColor: "#222228" }}>
+        <div className="max-w-2xl mx-auto flex justify-around px-2 py-1">
           {navItems.map(item => (
             <button
               key={item.id}
               onClick={() => setTab(item.id)}
-              className={`flex flex-col items-center gap-1 px-4 py-2 rounded-2xl transition-all ${
-                tab === item.id ? "text-gray-900" : "text-gray-400 hover:text-gray-600"
-              }`}
+              className="flex flex-col items-center gap-0.5 px-3 py-2 rounded-2xl transition-all"
+              style={{ color: tab === item.id ? "#a78bfa" : "#444" }}
             >
-              <div className={`p-1.5 rounded-xl transition-colors ${tab === item.id ? "bg-gray-100" : ""}`}>
+              <div className="p-1.5 rounded-xl" style={{ background: tab === item.id ? "#1e1a2e" : "transparent" }}>
                 <Icon name={item.icon} size={20} />
               </div>
               <span className="text-xs font-medium">{item.label}</span>
