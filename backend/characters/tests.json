@@ -1,0 +1,11 @@
+{
+  "tests": [
+    {
+      "name": "GET characters list",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200,
+      "bodyMatcher": "partial"
+    }
+  ]
+}
