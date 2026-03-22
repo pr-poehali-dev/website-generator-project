@@ -1,5 +1,5 @@
 """
-Чат с персонажем через Hugging Face — бесплатно, без ключей, работает из России
+Чат с персонажем через Groq — бесплатно, быстро, работает из России (llama3)
 """
 import json
 import os
@@ -11,42 +11,32 @@ def get_conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
 
 
-def hf_chat(system_prompt: str, history: list, user_msg: str) -> str:
-    prompt = f"<s>[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n"
-    for msg in history[-6:]:
-        if msg["role"] == "user":
-            prompt += f"{msg['content']} [/INST] "
-        else:
-            prompt += f"{msg['content']} </s><s>[INST] "
-    prompt += f"{user_msg} [/INST]"
+def groq_chat(system_prompt: str, history: list, user_msg: str) -> str:
+    messages = [{"role": "system", "content": system_prompt}]
+    messages += history[-10:]
+    messages.append({"role": "user", "content": user_msg})
 
     payload = json.dumps({
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": 300,
-            "temperature": 0.8,
-            "return_full_text": False,
-            "stop": ["</s>", "[INST]"]
-        }
+        "model": "llama3-8b-8192",
+        "messages": messages,
+        "max_tokens": 400,
+        "temperature": 0.85,
     }).encode("utf-8")
 
+    api_key = os.environ.get("GROQ_API_KEY", "")
     req = urllib.request.Request(
-        "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2",
+        "https://api.groq.com/openai/v1/chat/completions",
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
         method="POST"
     )
-    with urllib.request.urlopen(req, timeout=25) as resp:
+    with urllib.request.urlopen(req, timeout=20) as resp:
         result = json.loads(resp.read())
 
-    if isinstance(result, list) and result:
-        text = result[0].get("generated_text", "").strip()
-        # Обрезаем лишние токены если есть
-        for stop in ["</s>", "[INST]", "<<SYS>>"]:
-            if stop in text:
-                text = text.split(stop)[0].strip()
-        return text or "..."
-    return "Не могу ответить прямо сейчас."
+    return result["choices"][0]["message"]["content"].strip()
 
 
 def handler(event: dict, context) -> dict:
@@ -94,12 +84,16 @@ def handler(event: dict, context) -> dict:
     history = [{"role": r[0], "content": r[1]} for r in reversed(cur.fetchall())]
 
     system_prompt = (
-        f"You are a character named {char_name}. {char_desc}. "
-        f"Stay in character always. Reply in Russian. Be concise and expressive."
+        f"Ты — персонаж по имени {char_name}. {char_desc}. "
+        f"Всегда оставайся в образе. Отвечай на русском языке. Отвечай живо и в духе своего характера."
     )
 
+    if not os.environ.get("GROQ_API_KEY"):
+        conn.close()
+        return {"statusCode": 503, "headers": headers, "body": json.dumps({"error": "⚙️ Нужно добавить GROQ_API_KEY в Ядро → Секреты. Получить бесплатно на console.groq.com"})}
+
     try:
-        reply = hf_chat(system_prompt, history, user_msg)
+        reply = groq_chat(system_prompt, history, user_msg)
     except Exception as e:
         conn.close()
         return {"statusCode": 502, "headers": headers, "body": json.dumps({"error": f"Ошибка ИИ: {str(e)}"})}
