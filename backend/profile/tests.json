@@ -1,0 +1,11 @@
+{
+  "tests": [
+    {
+      "name": "GET profile missing user_id",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 400,
+      "bodyMatcher": "partial"
+    }
+  ]
+}

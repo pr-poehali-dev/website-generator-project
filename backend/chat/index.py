@@ -1,5 +1,5 @@
 """
-Чат с персонажем через OpenAI GPT — отправка и получение сообщений
+Чат с персонажем через OpenRouter — работает из России, поддерживает GPT и другие модели
 """
 import json
 import os
@@ -29,6 +29,7 @@ def handler(event: dict, context) -> dict:
     data = json.loads(event.get("body") or "{}")
     char_id = data.get("char_id")
     user_msg = data.get("message", "").strip()
+    user_id = data.get("user_id", "")
 
     if not char_id or not user_msg:
         return {"statusCode": 400, "headers": headers, "body": json.dumps({"error": "char_id и message обязательны"})}
@@ -36,13 +37,18 @@ def handler(event: dict, context) -> dict:
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT name, description FROM characters WHERE id = %s", (char_id,))
+    cur.execute("SELECT name, description, is_public, owner_id FROM characters WHERE id = %s", (char_id,))
     char = cur.fetchone()
     if not char:
         conn.close()
         return {"statusCode": 404, "headers": headers, "body": json.dumps({"error": "Персонаж не найден"})}
 
-    char_name, char_desc = char
+    char_name, char_desc, is_public, owner_id = char
+
+    # Приватный персонаж — только для автора
+    if not is_public and owner_id and owner_id != user_id:
+        conn.close()
+        return {"statusCode": 403, "headers": headers, "body": json.dumps({"error": "Этот персонаж приватный. Только автор может с ним общаться."})}
 
     cur.execute(
         "SELECT role, content FROM messages WHERE char_id = %s ORDER BY id DESC LIMIT 20",
@@ -50,11 +56,14 @@ def handler(event: dict, context) -> dict:
     )
     history = [{"role": r[0], "content": r[1]} for r in reversed(cur.fetchall())]
 
-    model = data.get("model", "gpt-3.5-turbo")
+    model = data.get("model", "openai/gpt-3.5-turbo")
     temperature = float(data.get("temperature", 0.8))
 
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    client = OpenAI(api_key=api_key)
+    # OpenRouter — работает из России
+    client = OpenAI(
+        api_key=os.environ.get("OPENROUTER_API_KEY", ""),
+        base_url="https://openrouter.ai/api/v1",
+    )
 
     messages = [
         {"role": "system", "content": f"Ты персонаж по имени {char_name}. {char_desc}. Отвечай в соответствии со своим характером."}

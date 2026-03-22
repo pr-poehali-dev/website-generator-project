@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    nickname TEXT NOT NULL DEFAULT 'Пользователь',
+    avatar_url TEXT DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS owner_id TEXT DEFAULT NULL;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT NULL;

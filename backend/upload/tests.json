@@ -1,0 +1,12 @@
+{
+  "tests": [
+    {
+      "name": "POST upload missing fields",
+      "method": "POST",
+      "path": "/",
+      "body": {},
+      "expectedStatus": 400,
+      "bodyMatcher": "partial"
+    }
+  ]
+}
